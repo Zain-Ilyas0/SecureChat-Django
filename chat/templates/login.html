@@ -1,0 +1,125 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureChat - Login</title>
+
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+
+<body class="auth-page">
+
+<div class="auth-card">
+
+    <section class="brand">
+        <div class="brand-logo">🔐 Secure<span>Chat</span></div>
+
+        <h2>Talk privately.<br>Only you two can read it.</h2>
+
+        <p>
+            Your messages are encrypted on your device, so even the server
+            cannot read them.
+        </p>
+
+        <ul class="features">
+            <li><span class="icon">🔒</span> End-to-end encryption</li>
+            <li><span class="icon">🙈</span> No one else can read your chats</li>
+            <li><span class="icon">⚡</span> Fast and simple to use</li>
+        </ul>
+    </section>
+
+    <section class="form-panel">
+
+        <div class="tabs">
+            <a class="tab active" href="{% url 'login' %}">Login</a>
+            <a class="tab" href="{% url 'register' %}">Register</a>
+        </div>
+
+        <h1 class="form-title">Welcome back</h1>
+        <p class="form-subtitle">Login to continue your private chats.</p>
+
+        {% if error %}
+            <div class="error-text show" style="margin-bottom: 14px;">{{ error }}</div>
+        {% endif %}
+
+        <form id="loginForm" method="post" novalidate>
+            {% csrf_token %}
+
+            <div class="field">
+                <label for="loginEmail">Email or phone number</label>
+                <div class="input-wrap">
+                    <input type="text" id="loginEmail" name="email" placeholder="you@example.com or 03001234567">
+                </div>
+                <div class="error-text" id="loginEmailError">Enter a valid email or phone number.</div>
+            </div>
+
+            <div class="field">
+                <label for="loginPassword">Password</label>
+                <div class="input-wrap">
+                    <input type="password" id="loginPassword" name="password" placeholder="Enter your password" autocomplete="new-password">
+                    <button type="button" class="toggle-pass" data-target="loginPassword">👁</button>
+                </div>
+                <div class="error-text" id="loginPasswordError">Password is required.</div>
+            </div>
+
+            <div class="row">
+                <label class="remember">
+                    <input type="checkbox"> Remember me
+                </label>
+                <a class="link">Forgot password?</a>
+            </div>
+
+            <button type="submit" class="submit-btn">Login</button>
+
+            <p class="switch-text">
+                New here? <a class="link" href="{% url 'register' %}">Create an account</a>
+            </p>
+        </form>
+
+        <div class="secure-note">🔒 Your data is protected with end-to-end encryption</div>
+
+    </section>
+</div>
+
+<script>
+document.querySelectorAll(".toggle-pass").forEach(btn => {
+    btn.addEventListener("click", () => {
+        const input = document.getElementById(btn.dataset.target);
+        input.type = input.type === "password" ? "text" : "password";
+    });
+});
+
+function setError(inputId, errorId, hasError) {
+    document.getElementById(inputId).classList.toggle("error", hasError);
+    document.getElementById(errorId).classList.toggle("show", hasError);
+}
+
+function validEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function validPhone(value) {
+    const cleaned = value.replace(/[\s\-]/g, "");
+    return /^\+?\d{10,15}$/.test(cleaned);
+}
+
+document.getElementById("loginForm").addEventListener("submit", (e) => {
+    const email = document.getElementById("loginEmail").value.trim();
+    const password = document.getElementById("loginPassword").value;
+
+    const emailBad = !(validEmail(email) || validPhone(email));
+    const passBad = password === "";
+
+    setError("loginEmail", "loginEmailError", emailBad);
+    setError("loginPassword", "loginPasswordError", passBad);
+
+    if (emailBad || passBad) {
+        e.preventDefault();
+    }
+});
+</script>
+
+</body>
+</html>

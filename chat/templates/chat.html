@@ -1,0 +1,395 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureChat</title>
+
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body class="chat-page" data-my-id="{{ request.user.id }}" data-csrf="{{ csrf_token }}" data-save-url="{% url 'save_key' %}">
+
+<div class="app">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+        <div class="logo">
+            🔐 Secure<span>Chat</span>
+        </div>
+
+        <form action="{% url 'find_user' %}" method="get">
+    <input type="text" name="q" class="search" placeholder="Type email or phone to start a chat..." autocomplete="off">
+</form>
+
+{% if notfound %}
+    <p class="last-message" style="padding: 0 20px 10px; color: #F87171;">
+        No user found with that email or phone.
+    </p>
+{% endif %}
+
+        <div class="chat-list">
+            {% for u in users %}
+                <a href="{% url 'chat_with' u.id %}"
+   class="chat {% if selected and selected.id == u.id %}active{% endif %}"
+   data-user-id="{{ u.id }}">
+
+    <div class="avatar">
+        {{ u.first_name|default:u.username|slice:":1"|upper }}
+        <span class="dot {% if u.id in online_ids %}on{% endif %}"></span>
+    </div>
+
+    <div class="chat-info">
+        <div class="chat-name">{{ u.first_name|default:u.username }}</div>
+        <!-- <div class="last-message">{{ u.email }}</div> -->
+    </div>
+
+</a>
+            {% empty %}
+    <p class="last-message" style="padding: 20px;">
+        No chats yet. Type an email or phone number above to start one.
+    </p>
+            {% endfor %}
+        </div>
+
+        <!-- Current user -->
+        <!-- Current user -->
+<div class="profile">
+    <div class="profile-avatar">
+        {{ request.user.first_name|default:request.user.username|slice:":1"|upper }}
+    </div>
+
+    <div class="profile-info">
+        <div class="profile-name">{{ request.user.first_name|default:request.user.username }}</div>
+        <div class="profile-status">● Online</div>
+    </div>
+
+    <a href="{% url 'logout' %}" class="logout-btn" title="Logout">
+        <span class="logout-icon">⏻</span>
+        <span class="logout-text">Logout</span>
+    </a>
+</div>
+
+    </aside>
+
+    <!-- MAIN CHAT -->
+    <main class="main">
+
+        {% if selected %}
+
+            <header class="chat-header">
+                <div class="avatar">
+                    {{ selected.first_name|default:selected.username|slice:":1"|upper }}
+                </div>
+
+                <div class="header-info">
+                    <h3>{{ selected.first_name|default:selected.username }}</h3>
+                    <div class="status {% if selected.id not in online_ids %}off{% endif %}" id="userStatus" data-user-id="{{ selected.id }}">
+    {% if selected.id in online_ids %}● Online{% elif selected.profile.last_seen %}Last seen {{ selected.profile.last_seen|date:"d M, h:i A" }}{% else %}Offline{% endif %}
+                    </div>
+                </div>
+            </header>
+
+            <section class="messages" id="messages">
+
+    <div class="encryption">
+        🔒 Messages are end-to-end encrypted
+    </div>
+
+    {% for m in chat_messages %}
+        <div class="message {% if m.sender == request.user %}sent{% else %}received{% endif %}">
+            <span class="msg-text">{{ m.text }}</span>
+            <span class="time">{{ m.created_at|time:"g:i A" }}</span>
+        </div>
+    {% empty %}
+        <div class="encryption" id="emptyNote">No messages yet</div>
+    {% endfor %}
+
+</section>
+
+            <form class="input-area" id="messageForm" data-other-id="{{ selected.id }}"
+                data-key-url="{% url 'get_key' selected.id %}">
+                <input type="text" class="message-input" id="messageInput" placeholder="Type a message..."          autocomplete="off">
+                <button type="submit" class="send-btn">➤</button>
+            </form>
+
+        {% else %}
+
+            <section class="messages">
+                <div class="encryption">Select a user from the left to open the chat</div>
+            </section>
+
+        {% endif %}
+
+    </main>
+
+</div>
+<script>
+const page = document.body;
+const form = document.getElementById("messageForm");
+const input = document.getElementById("messageInput");
+const box = document.getElementById("messages");
+
+const myId = Number(page.dataset.myId);
+const keyName = "securechat_key_" + myId;
+const curve = { name: "ECDH", namedCurve: "P-256" };
+
+let sharedKey = null;
+let myPrivateKey = null;
+let lastRefresh = 0;
+
+// Fetch the other person's newest public key and build the shared key again
+async function refreshSharedKey() {
+    lastRefresh = Date.now();
+    const fresh = await fetchSharedKey(myPrivateKey);
+    if (fresh) sharedKey = fresh;
+}
+
+
+// ---------- small helpers ----------
+function toBase64(buffer) {
+    return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+}
+
+function fromBase64(text) {
+    return Uint8Array.from(atob(text), c => c.charCodeAt(0));
+}
+
+// ---------- my key pair (made once, kept in this browser) ----------
+async function getMyKeys() {
+    // A key made on the register page is moved to this user here
+    const pending = localStorage.getItem("securechat_pending_key");
+    if (pending) {
+        if (!localStorage.getItem(keyName)) {
+            localStorage.setItem(keyName, pending);
+        }
+        localStorage.removeItem("securechat_pending_key");
+    }
+
+    const saved = localStorage.getItem(keyName);
+
+    if (saved) {
+        const jwk = JSON.parse(saved);
+        const privateKey = await crypto.subtle.importKey("jwk", jwk.private, curve, false, ["deriveKey"]);
+        return { privateKey: privateKey, publicJwk: jwk.public };
+    }
+
+    const pair = await crypto.subtle.generateKey(curve, true, ["deriveKey"]);
+    const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+
+    localStorage.setItem(keyName, JSON.stringify({ private: privateJwk, public: publicJwk }));
+    return { privateKey: pair.privateKey, publicJwk: publicJwk };
+}
+
+// ---------- send my public key to the server ----------
+// async function uploadPublicKey(publicJwk) {
+//     const data = new FormData();
+//     data.append("public_key", JSON.stringify(publicJwk));
+
+//     await fetch(page.dataset.saveUrl, {
+//         method: "POST",
+//         headers: { "X-CSRFToken": page.dataset.csrf },
+//         body: data
+//     });
+// }
+
+async function uploadPublicKey(publicJwk) {
+    const data = new FormData();
+    data.append("public_key", JSON.stringify(publicJwk));
+
+    const res = await fetch(page.dataset.saveUrl, {
+        method: "POST",
+        headers: { "X-CSRFToken": page.dataset.csrf },
+        body: data
+    });
+
+    if (!res.ok) {
+        alert("Your key could not be saved on the server (status " + res.status + "). Messages will not unlock until this is fixed.");
+    }
+}
+
+// ---------- make the secret key shared with the other person ----------
+async function fetchSharedKey(privateKey) {
+    const response = await fetch(form.dataset.keyUrl);
+    const result = await response.json();
+
+    if (!result.public_key) return null;
+
+    const theirPublic = await crypto.subtle.importKey(
+        "jwk", JSON.parse(result.public_key), curve, false, []
+    );
+
+    return crypto.subtle.deriveKey(
+        { name: "ECDH", public: theirPublic },
+        privateKey,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+    );
+}
+
+// ---------- lock and unlock text ----------
+async function encryptText(text) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv }, sharedKey, new TextEncoder().encode(text)
+    );
+    return toBase64(iv) + ":" + toBase64(encrypted);
+}
+
+async function tryDecrypt(payload) {
+    // Old messages saved before encryption are plain text. Show them as they are.
+    if (!/^[A-Za-z0-9+/=]{16}:[A-Za-z0-9+/=]+$/.test(payload)) {
+        return payload;
+    }
+
+    try {
+        const parts = payload.split(":");
+        const plain = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: fromBase64(parts[0]) }, sharedKey, fromBase64(parts[1])
+        );
+        return new TextDecoder().decode(plain);
+    } catch (err) {
+        return null;
+    }
+}
+
+async function decryptText(payload) {
+    let text = await tryDecrypt(payload);
+
+    // The other person's key may have changed. Fetch it again and retry once.
+    if (text === null && Date.now() - lastRefresh > 5000) {
+        await refreshSharedKey();
+        text = await tryDecrypt(payload);
+    }
+
+    return text === null ? "🔒 Unable to decrypt this message" : text;
+}
+
+// ---------- show messages ----------
+function addMessage(text, time, mine) {
+    const note = document.getElementById("emptyNote");
+    if (note) note.remove();
+
+    const div = document.createElement("div");
+    div.className = "message " + (mine ? "sent" : "received");
+
+    const body = document.createElement("span");
+    body.textContent = text;
+    div.appendChild(body);
+
+    const span = document.createElement("span");
+    span.className = "time";
+    span.textContent = time;
+    div.appendChild(span);
+
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+async function decryptHistory() {
+    for (const el of document.querySelectorAll(".msg-text")) {
+        el.textContent = await decryptText(el.textContent.trim());
+    }
+}
+
+// ---------- live connection ----------
+function openSocket() {
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(protocol + "://" + location.host + "/ws/chat/" + form.dataset.otherId + "/");
+
+    socket.onmessage = async (e) => {
+        const data = JSON.parse(e.data);
+        const text = await decryptText(data.text);
+        addMessage(text, data.time, data.sender_id === myId);
+    };
+
+        form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        const text = input.value.trim();
+        if (text === "" || socket.readyState !== WebSocket.OPEN) return;
+
+        // Always lock with the other person's newest key
+        await refreshSharedKey();
+        if (!sharedKey) return;
+
+        const encrypted = await encryptText(text);
+        socket.send(JSON.stringify({ text: encrypted }));
+
+        input.value = "";
+        input.focus();
+    });
+}
+
+// ---------- if the other person has no key yet, keep checking ----------
+function waitForKey(privateKey) {
+    input.disabled = true;
+    input.placeholder = "Waiting for this person to log in once. You can send as soon as they do.";
+
+    const timer = setInterval(async () => {
+        sharedKey = await fetchSharedKey(privateKey);
+
+        if (sharedKey) {
+            clearInterval(timer);
+            input.disabled = false;
+            input.placeholder = "Type a message...";
+            await decryptHistory();
+        }
+    }, 5000);
+}
+
+// ---------- start ----------
+async function start() {
+    // Runs on every chat page, so a key exists as soon as someone logs in
+    const keys = await getMyKeys();
+        myPrivateKey = keys.privateKey;
+    await uploadPublicKey(keys.publicJwk);
+
+    // No chat open yet: the key is ready, nothing else to do
+    if (!form) return;
+
+    box.scrollTop = box.scrollHeight;
+    openSocket();
+
+    sharedKey = await fetchSharedKey(keys.privateKey);
+
+    if (sharedKey) {
+        await decryptHistory();
+        box.scrollTop = box.scrollHeight;
+    } else {
+        waitForKey(keys.privateKey);
+    }
+}
+
+// ---------- online / last seen ----------
+function openPresence() {
+    const protocol = location.protocol === "https:" ? "wss" : "ws";
+    const presence = new WebSocket(protocol + "://" + location.host + "/ws/presence/");
+
+    presence.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+
+        // green dot in the sidebar
+        const dot = document.querySelector('.chat[data-user-id="' + data.user_id + '"] .dot');
+        if (dot) dot.classList.toggle("on", data.online);
+
+        // status in the header of the open chat
+        const status = document.getElementById("userStatus");
+        if (status && Number(status.dataset.userId) === data.user_id) {
+            status.textContent = data.online ? "● Online" : "Last seen " + data.last_seen;
+            status.classList.toggle("off", !data.online);
+        }
+    };
+}
+
+openPresence();
+start();
+
+
+</script>
+</body>
+
+</html>

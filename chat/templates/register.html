@@ -1,0 +1,169 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureChat - Register</title>
+
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+
+<body class="auth-page">
+<div class="auth-card">
+
+    <section class="brand">
+        <div class="brand-logo">🔐 Secure<span>Chat</span></div>
+
+        <h2>Talk privately.<br>Only you two can read it.</h2>
+
+        <p>
+            Your messages are encrypted on your device, so even the server
+            cannot read them.
+        </p>
+
+        <ul class="features">
+            <li><span class="icon">🔒</span> End-to-end encryption</li>
+            <li><span class="icon">🙈</span> No one else can read your chats</li>
+            <li><span class="icon">⚡</span> Fast and simple to use</li>
+        </ul>
+    </section>
+
+    <section class="form-panel">
+
+        <div class="tabs">
+            <a class="tab" href="{% url 'login' %}">Login</a>
+            <a class="tab active" href="{% url 'register' %}">Register</a>
+        </div>
+
+        <h1 class="form-title">Create your account</h1>
+        <p class="form-subtitle">Register to start chatting securely.</p>
+
+        {% if error %}
+            <div class="error-text show" style="margin-bottom: 14px;">{{ error }}</div>
+        {% endif %}
+
+        <form id="registerForm" method="post" novalidate>
+            {% csrf_token %}
+            <input type="hidden" name="public_key" id="regPublicKey">
+
+            <div class="field">
+                <label for="regName">Full name</label>
+                <div class="input-wrap">
+                    <input type="text" id="regName" name="name" placeholder="Your name" autocomplete="off">
+                </div>
+                <div class="error-text" id="regNameError">Name is required.</div>
+            </div>
+
+            <div class="field">
+                <label for="regEmail">Email</label>
+                <div class="input-wrap">
+                    <input type="email" id="regEmail" name="email" placeholder="you@example.com" autocomplete="off">
+                </div>
+                <div class="error-text" id="regEmailError">Enter a valid email address.</div>
+            </div>
+            <!-- ADD THIS: phone field -->
+            <div class="field">
+                <label for="regPhone">Phone number</label>
+                <div class="input-wrap">
+                    <input type="tel" id="regPhone" name="phone" placeholder="03001234567">
+                </div>
+                <div class="error-text" id="regPhoneError">Enter a valid phone number.</div>
+            </div>
+
+            <div class="field">
+                <label for="regPassword">Password</label>
+                <div class="input-wrap">
+                    <input type="password" id="regPassword" name="password" placeholder="At least 8 characters" autocomplete="new-password">
+                    <button type="button" class="toggle-pass" data-target="regPassword">👁</button>
+                </div>
+                <div class="error-text" id="regPasswordError">Password must be at least 8 characters.</div>
+            </div>
+
+            <div class="field">
+                <label for="regConfirm">Confirm password</label>
+                <div class="input-wrap">
+                    <input type="password" id="regConfirm" name="confirm" placeholder="Repeat your password">
+                    <button type="button" class="toggle-pass" data-target="regConfirm">👁</button>
+                </div>
+                <div class="error-text" id="regConfirmError">Passwords do not match.</div>
+            </div>
+
+            <button type="submit" class="submit-btn">Create account</button>
+
+            <p class="switch-text">
+                Already have an account? <a class="link" href="{% url 'login' %}">Login</a>
+            </p>
+        </form>
+
+        <div class="secure-note">🔒 Your data is protected with end-to-end encryption</div>
+
+    </section>
+</div>
+
+<script>
+document.querySelectorAll(".toggle-pass").forEach(btn => {
+    btn.addEventListener("click", () => {
+        const input = document.getElementById(btn.dataset.target);
+        input.type = input.type === "password" ? "text" : "password";
+    });
+});
+
+function setError(inputId, errorId, hasError) {
+    document.getElementById(inputId).classList.toggle("error", hasError);
+    document.getElementById(errorId).classList.toggle("show", hasError);
+}
+
+function validEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function validPhone(value) {
+    const cleaned = value.replace(/[\s\-]/g, "");
+    return /^\+?\d{10,15}$/.test(cleaned);
+}
+
+// Make the key pair in the browser while registering
+async function makeKeys() {
+    const curve = { name: "ECDH", namedCurve: "P-256" };
+    const pair = await crypto.subtle.generateKey(curve, true, ["deriveKey"]);
+    const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+
+    // The private key stays in this browser. Only the public key goes to the server.
+    localStorage.setItem("securechat_pending_key", JSON.stringify({ private: privateJwk, public: publicJwk }));
+    document.getElementById("regPublicKey").value = JSON.stringify(publicJwk);
+}
+
+const registerForm = document.getElementById("registerForm");
+
+registerForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const name = document.getElementById("regName").value.trim();
+    const email = document.getElementById("regEmail").value.trim();
+    const phone = document.getElementById("regPhone").value.trim();
+    const password = document.getElementById("regPassword").value;
+    const confirm = document.getElementById("regConfirm").value;
+
+    const nameBad = name === "";
+    const emailBad = !validEmail(email);
+    const phoneBad = !validPhone(phone);
+    const passBad = password.length < 8;
+    const confirmBad = confirm !== password || confirm === "";
+
+    setError("regName", "regNameError", nameBad);
+    setError("regEmail", "regEmailError", emailBad);
+    setError("regPhone", "regPhoneError", phoneBad);
+    setError("regPassword", "regPasswordError", passBad);
+    setError("regConfirm", "regConfirmError", confirmBad);
+
+    if (nameBad || emailBad || phoneBad || passBad || confirmBad) return;
+
+    await makeKeys();
+    registerForm.submit();
+});
+</script>
+
+</body>
+</html>
